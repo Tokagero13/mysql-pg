@@ -1,79 +1,79 @@
 # MySQL to PostgreSQL Migration Tool
 
-Этот проект предназначен для автоматизированной миграции схемы базы данных из MySQL в PostgreSQL с использованием SQLAlchemy и Alembic.
+This project is designed for automated database schema migration from MySQL to PostgreSQL using SQLAlchemy and Alembic.
 
-## Что это такое?
+## Overview
 
-Инструментарий позволяет:
-1. Интроспектировать существующую базу данных MySQL и генерировать модели SQLAlchemy.
-2. Конвертировать типы данных MySQL (TINYINT, LONGTEXT, UNSIGNED и др.) в аналоги PostgreSQL.
-3. Исправлять имена идентификаторов (таблицы, индексы, FK), превышающие лимит PostgreSQL в 63 символа.
-4. Патчить Alembic миграции для совместимости с PostgreSQL (исправление булевых значений и дедупликация индексов).
-5. Разделять монолитный файл моделей на отдельные файлы классов.
+The toolkit provides functionality to:
+1. Introspect an existing MySQL database and generate SQLAlchemy models.
+2. Convert MySQL data types (TINYINT, LONGTEXT, UNSIGNED, etc.) to PostgreSQL equivalents.
+3. Fix identifier names (tables, indexes, FKs) that exceed the 63-character PostgreSQL limit.
+4. Patch Alembic migrations for PostgreSQL compatibility (boolean fixes, index de-duplication).
+5. Split a monolithic models file into individual class files.
 
 ---
 
-## Детали конвертации (01_convert_models.py)
+## Conversion Details (01_convert_models.py)
 
-Скрипт выполняет глубокую трансформацию моделей для обеспечения полной совместимости с PostgreSQL. Ниже приведена таблица соответствий и логика преобразований:
+The script performs a deep transformation of the models to ensure full compatibility with PostgreSQL:
 
-### Таблица соответствия типов и атрибутов
+### Type and Attribute Mapping Table
 
-| MySQL / Специфичный код | PostgreSQL / SQLAlchemy | Комментарий |
+| MySQL / Specific Code | PostgreSQL / SQLAlchemy | Comment |
 | :--- | :--- | :--- |
-| `LONGTEXT`, `MEDIUMTEXT` | `Text` | Приводится к универсальному текстовому типу |
-| `VARCHAR(N)`, `CHAR(N)` | `String(N)` | Удаляются `charset` и `collation` |
-| `DOUBLE`, `DECIMAL` | `Float` | PostgreSQL предпочитает `Float` или `Numeric` для таких данных |
-| `TIMESTAMP`, `TIMESTAMP(fsp)` | `DateTime` | Стандартный тип даты и времени |
-| `TINYINT(1)` (флаги) | `Boolean` | Если имя поля начинается на `is_`, `has_`, `can_` и т.д. |
-| `TINYINT` (числа) | `SmallInteger` | Если имя поля не соответствует паттернам флагов |
-| `unsigned=True` | *(удаляется)* | В PostgreSQL нет встроенного модификатора `unsigned` |
-| `charset='...'`, `collation='...'` | *(удаляется)* | Параметры кодировки MySQL несовместимы с Postgres |
-| `text('0')` / `text('1')` | `text('false')` / `text('true')` | Только для полей, определенных как `Boolean` |
+| `LONGTEXT`, `MEDIUMTEXT` | `Text` | Converted to universal text type |
+| `VARCHAR(N)`, `CHAR(N)` | `String(N)` | `charset` and `collation` are removed |
+| `DOUBLE`, `DECIMAL` | `Float` | PostgreSQL prefers `Float` or `Numeric` for these |
+| `TIMESTAMP`, `TIMESTAMP(fsp)` | `DateTime` | Standard date and time type |
+| `TINYINT(1)` (flags) | `Boolean` | Applied if the field name matches patterns like `is_`, `has_`, etc. |
+| `TINYINT` (numbers) | `SmallInteger` | Applied if the field name doesn't match flag patterns |
+| `unsigned=True` | *(removed)* | PostgreSQL does not have a native `unsigned` modifier |
+| `charset='...'`, `collation='...'` | *(removed)* | MySQL encoding parameters are incompatible with Postgres |
+| `text('0')` / `text('1')` | `text('false')` / `text('true')` | Only for fields defined as `Boolean` |
 
-### Логика обработки TINYINT
-Скрипт автоматически определяет, является ли поле `TINYINT` логическим (Boolean) или числовым (SmallInteger), анализируя его имя. К логическим относятся поля:
-*   С префиксами: `is_`, `has_`, `can_`, `should_`, `was_`.
-*   Специальные имена: `active`, `visible`, `public`, `enabled`, `deleted`, `revoked`, `archived` и др.
+### TINYINT Handling Logic
+The script automatically determines whether a `TINYINT` field is logical (Boolean) or numeric (SmallInteger) by analyzing its name. Fields considered logical include:
+*   Prefixes: `is_`, `has_`, `can_`, `should_`, `was_`.
+*   Special names: `active`, `visible`, `public`, `enabled`, `deleted`, `revoked`, `archived`, etc.
 
-### Обработка временных меток (Triggers)
-MySQL-специфичная конструкция:
+### Timestamp Handling (Triggers)
+MySQL-specific construction:
 `server_default=text('CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP')`
-автоматически заменяется на стандарт SQLAlchemy:
+is automatically replaced with the SQLAlchemy standard:
 `server_default=text('CURRENT_TIMESTAMP'), onupdate=func.now()`
 
-### Очистка и импорты
-*   **Импорты**: Скрипт удаляет `from sqlalchemy.dialects.mysql import ...` и гарантирует наличие всех необходимых типов в `from sqlalchemy import ...`.
-*   **Синтаксис**: Удаляются лишние пустые скобки в типах (например, `Integer()` -> `Integer`) для соответствия PEP8 и стилю SQLAlchemy.
+### Cleanup and Imports
+*   **Imports**: The script removes `from sqlalchemy.dialects.mysql import ...` and ensures all necessary types are present in `from sqlalchemy import ...`.
+*   **Syntax**: Removes unnecessary empty parentheses in types (e.g., `Integer()` -> `Integer`) for PEP8 compliance.
 
 ---
 
-## Технические подробности патчей
+## Technical Patch Details
 
-### 02_patch_identifiers.py (Длинные имена)
-PostgreSQL имеет жесткое ограничение на длину идентификаторов (таблиц, индексов, FK) в **63 символа**. Скрипт:
-1.  Сканирует `models_pg.py` на наличие имен, превышающих этот лимит.
-2.  Использует алгоритм: `имя_до_54_символов + _ + 8_символов_md5_хеша`.
-3.  Хеширование гарантирует, что даже после сокращения имена останутся уникальными в рамках всей базы данных.
+### 02_patch_identifiers.py (Long Names)
+PostgreSQL has a strict **63-character** limit on identifier lengths (tables, indexes, FKs). The script:
+1.  Scans `models_pg.py` for names exceeding this limit.
+2.  Applies the algorithm: `name_up_to_54_chars + _ + 8_char_md5_hash`.
+3.  Hashing ensures that names remain unique across the entire database even after truncation.
 
-### 03_patch_migration.py (Патч Alembic)
-Этот скрипт критически важен для "лечения" сгенерированных миграций, которые изначально заточены под MySQL. Он выполняет:
-*   **Массовую замену типов**: Ищет `mysql.TINYINT` в файле миграции и заменяет их на `sa.Boolean()` или `sa.SmallInteger()`.
-*   **Дедупликацию индексов**: В PostgreSQL индексы должны быть уникальны в рамках всей схемы. Скрипт переименовывает индексы типа `school_id` в `idx_table_name_school_id`.
-*   **Исправление пустых индексов**: Находит ошибочные конструкции `op.create_index(..., [])` и подставляет имя колонки из имени индекса.
-*   **Трансляцию Server Defaults**: Меняет `'0'/'1'` на `'false'/'true'` для булевых колонок на уровне DDL.
+### 03_patch_migration.py (Alembic Patch)
+This script is critical for "fixing" generated migrations that are originally tailored for MySQL:
+*   **Bulk Type Replacement**: Replaces `mysql.TINYINT` in the migration file with `sa.Boolean()` or `sa.SmallInteger()`.
+*   **Index De-duplication**: In PostgreSQL, index names must be unique within the schema. The script renames indexes like `school_id` to `idx_table_name_school_id`.
+*   **Empty Index Fix**: Fixes erroneous `op.create_index(..., [])` constructs by inserting the column name derived from the index name.
+*   **Server Default Translation**: Changes `'0'/'1'` to `'false'/'true'` for boolean columns at the DDL level.
 
-### 04_split_models.py (Разделение)
-Разрезает монолитный файл на модульную структуру:
-*   Создает `models/base.py` с декларативным базовым классом.
-*   Генерирует по одному `.py` файлу на каждую таблицу.
-*   Создает `models/__init__.py` для удобного импорта всех моделей из одного места.
+### 04_split_models.py (Splitting)
+Splits the monolithic file into a modular structure:
+*   Creates `models/base.py` with the declarative base class.
+*   Generates one `.py` file per table.
+*   Creates `models/__init__.py` for convenient importing of all models.
 
 ---
 
-## Как пользоваться (Автоматический режим)
+## How to Use (Automated Mode)
 
-Самый простой способ — запустить оркестратор, который проведет вас через все шаги:
+The easiest way is to run the orchestrator, which will guide you through all steps:
 
 ### Windows (PowerShell):
 ```powershell
@@ -86,57 +86,59 @@ chmod +x migrate.sh
 ./migrate.sh
 ```
 
-**Оркестратор выполнит следующие шаги:**
-1. Запросит строку подключения к MySQL и сгенерирует `models.py`.
-2. Сконвертирует модели в `models_pg.py`.
-3. Исправит длинные имена идентификаторов.
-4. Пропатчит файл миграции Alembic.
-5. Разделит модели на отдельные файлы в папку `models/`.
-6. Поможет создать `.env` и запустить PostgreSQL в Docker.
-7. Применит миграции (`alembic upgrade head`).
+**The orchestrator will perform the following steps:**
+1. Prompt for MySQL connection string and generate `models.py`.
+2. Convert models to `models_pg.py`.
+3. Fix long identifier names.
+4. Patch the Alembic migration file.
+5. Split models into individual files in the `models/` directory.
+6. Assist in creating `.env` and starting PostgreSQL in Docker.
+7. Apply migrations (`alembic upgrade head`).
+8. Prompt for cleanup of intermediate files.
 
 ---
 
-## Как пользоваться (Ручной режим)
+## How to Use (Manual Mode)
 
-Если вы хотите запускать шаги по отдельности, используйте скрипты в папке `scripts/` по порядку:
+If you prefer to run steps individually, use the scripts in the `scripts/` directory in order:
 
-### 1. Генерация моделей
+### 1. Generate Models
 ```bash
 uv run --with sqlacodegen --with pymysql sqlacodegen mysql+pymysql://user:pass@host:port/db_name > models.py
 ```
 
-### 2. Конвертация типов
+### 2. Convert Types
 ```bash
 python scripts/01_convert_models.py models.py -o models_pg.py
 ```
 
-### 3. Исправление длинных имен
+### 3. Fix Long Names
 ```bash
 python scripts/02_patch_identifiers.py
 ```
 
-### 4. Патч миграции Alembic
+### 4. Patch Alembic Migration
 ```bash
 python scripts/03_patch_migration.py
 ```
 
-### 5. Разделение моделей по файлам
+### 5. Split Models
 ```bash
 python scripts/04_split_models.py models_pg.py -o models
 ```
 
-### 6. Запуск инфраструктуры и миграция
-1. Настройте `.env` (см. `env.example`).
-2. Запустите БД: `docker-compose up -d`.
-3. Примените схему: `uv run alembic upgrade head`.
+### 6. Infrastructure and Migration
+1. Configure `.env` (see `env.example`).
+2. Start DB: `docker-compose up -d`.
+3. Apply schema: `uv run alembic upgrade head`.
 
 ---
 
-## Структура проекта
+## Project Structure
 
-* `main.py` — Главный оркестратор миграции.
-* `scripts/` — Набор скриптов для трансформации кода.
-* `alembic/` — Конфигурация и история миграций.
-* `models/` — Папка для итоговых моделей (генерируется автоматически).
-* `docker-compose.yml` — Окружение с PostgreSQL 16.
+* `main.py` — Main migration orchestrator.
+* `scripts/` — Toolkit for code transformation.
+* `alembic/` — Configuration and migration history.
+* `models/` — Final models directory (generated automatically).
+* `docker-compose.yml` — PostgreSQL 16 environment.
+* `.gitignore` — Properly configured to exclude generated and sensitive data.
