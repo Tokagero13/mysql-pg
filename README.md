@@ -142,3 +142,9 @@ python scripts/04_split_models.py models_pg.py -o models
 * `models/` — Final models directory (generated automatically).
 * `docker-compose.yml` — PostgreSQL 16 environment.
 * `.gitignore` — Properly configured to exclude generated and sensitive data.
+
+---
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

@@ -141,3 +141,9 @@ python scripts/04_split_models.py models_pg.py -o models
 * `alembic/` — Конфигурация и история миграций.
 * `models/` — Папка для итоговых моделей (генерируется автоматически).
 * `docker-compose.yml` — Окружение с PostgreSQL 16.
+
+---
+
+## Лицензия
+
+Этот проект лицензирован на условиях лицензии MIT — подробности см. в файле [LICENSE](LICENSE).
