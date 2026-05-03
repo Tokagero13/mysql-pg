@@ -1,0 +1,15 @@
+[project]
+name = "mysql-pg"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.18.4",
+    "dotenv>=0.9.9",
+    "psycopg>=3.3.4",
+    "psycopg-binary>=3.3.4",
+    "pymysql>=1.1.3",
+    "sqlacodegen>=4.0.3",
+    "sqlalchemy>=2.0.49",
+]
